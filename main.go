@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"syscall"
 	"os/signal"
+	"strings"
 )
 
 var (
@@ -77,11 +78,24 @@ func ready(s *discordgo.Session, event *discordgo.Ready) {
 
 	r.POST("/", func(c *gin.Context) {
 		var monitor Monitor
+		var color int
 
 		// Parse JSON data from request body into the monitor struct
 		if err := c.ShouldBindJSON(&monitor); err != nil {
+			fmt.Println("Parse Error: " + err.Error())
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
+		}
+		monitor.Body = strings.Replace(monitor.Body, "%%%", "", -1)
+		monitor.Body = strings.Replace(monitor.Body, "- - -", "", -1)
+		monitor.Body = strings.Replace(monitor.Body, "\n\n", "\n", -1)
+
+		if strings.Contains(monitor.Title, "Triggered") {
+			color = 15548997
+		} else if strings.Contains(monitor.Title, "Warn") {
+			color = 16776960
+		} else if strings.Contains(monitor.Title, "Recovered") {
+			color = 5763719
 		}
 
 		_, err := s.ChannelMessageSendComplex(opsChannel, &discordgo.MessageSend{
@@ -90,16 +104,17 @@ func ready(s *discordgo.Session, event *discordgo.Ready) {
 					Title: "Datadog Alerts",
 					Fields: []*discordgo.MessageEmbedField{
 						{
-							Name:  "Test Name",
-							Value: "Test Value",
+							Name:  monitor.Title,
+							Value: monitor.Body,
 						},
 					},
-					Color: 0,
+					Color: color,
 				},
 			},
 		})
 
 		if err != nil {
+			fmt.Println("Send Error: " + err.Error())
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
