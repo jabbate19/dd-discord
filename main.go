@@ -9,6 +9,10 @@ import (
 	"syscall"
 	"os/signal"
 	"strings"
+	"github.com/gomarkdown/markdown"
+	"github.com/gomarkdown/markdown/ast"
+	"github.com/gomarkdown/markdown/md"
+	"github.com/gomarkdown/markdown/parser"
 )
 
 var (
@@ -31,9 +35,32 @@ type Monitor struct {
 	Body        string `json:"body"`
 }
 
-func main() {
-	
+type ParseOut struct {
+    node ast.Node
+    img string
+}
 
+func modifyAst(doc ast.Node) ParseOut {
+    imgLink := ""
+	ast.WalkFunc(doc, func(node ast.Node, entering bool) ast.WalkStatus {
+		if link, ok := node.(*ast.Link); ok && entering {
+            for _, value := range link.Children {
+                if img, ok := value.(*ast.Image); ok && entering {
+        			imgLink = string(img.Destination)
+                    ast.RemoveFromTree(link)
+        		}
+            }
+		}
+
+		return ast.GoToNext
+	})
+	return ParseOut {
+        doc,
+        imgLink,
+    }
+}
+
+func main() {
 	dg, err := discordgo.New("Bot " + token)
 	if err != nil {
 		fmt.Println("Error creating Discord session:", err)
@@ -88,7 +115,6 @@ func ready(s *discordgo.Session, event *discordgo.Ready) {
 		}
 		monitor.Body = strings.Replace(monitor.Body, "%%%", "", -1)
 		monitor.Body = strings.Replace(monitor.Body, "- - -", "", -1)
-		monitor.Body = strings.Replace(monitor.Body, "\n\n", "\n", -1)
 
 		if strings.Contains(monitor.Title, "Triggered") {
 			color = 15548997
@@ -98,6 +124,23 @@ func ready(s *discordgo.Session, event *discordgo.Ready) {
 			color = 5763719
 		}
 
+		oldMd := []byte(monitor.Body)
+
+		extensions := parser.CommonExtensions
+		p := parser.NewWithExtensions(extensions)
+		doc := p.Parse(oldMd)
+
+		out := modifyAst(doc)
+
+		doc = out.node
+
+		renderer := md.NewRenderer()
+		newMd := string(markdown.Render(doc, renderer))
+
+		newMd = strings.Replace(newMd, "\n", "\n\n", -1)
+
+    	newMd = strings.Replace(newMd, "\n\n\n\n", "\n\n", -1)
+
 		_, err := s.ChannelMessageSendComplex(opsChannel, &discordgo.MessageSend{
 			Embeds: []*discordgo.MessageEmbed{
 				{
@@ -105,8 +148,11 @@ func ready(s *discordgo.Session, event *discordgo.Ready) {
 					Fields: []*discordgo.MessageEmbedField{
 						{
 							Name:  monitor.Title,
-							Value: monitor.Body,
+							Value: string(newMd),
 						},
+					},
+					Image: &discordgo.MessageEmbedImage{
+						URL: out.img,
 					},
 					Color: color,
 				},
@@ -122,5 +168,5 @@ func ready(s *discordgo.Session, event *discordgo.Ready) {
 		c.JSON(http.StatusOK, gin.H{"message": "Monitor data parsed successfully"})
 	})
 
-	r.Run(":8080")
+	r.Run(":9000")
 }
